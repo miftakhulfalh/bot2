@@ -16,9 +16,58 @@ function createSetupSpreadsheetScene() {
   
   // Definisikan tindakan saat scene dimulai
   scene.enter(async (ctx) => {
-    await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
-    await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
-    await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
+    try {
+      const userId = ctx.from.id;
+      // Cek apakah user sudah memiliki spreadsheet
+      const userSheetData = await getUserSheetData(userId);
+      
+      if (userSheetData && userSheetData.spreadsheetUrl) {
+        // User sudah memiliki spreadsheet
+        const sheetId = extractSheetIdFromUrl(userSheetData.spreadsheetUrl);
+        
+        try {
+          // Coba load spreadsheet untuk mendapatkan judul
+          const doc = new GoogleSpreadsheet(sheetId);
+          await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
+          await doc.loadInfo();
+          
+          await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+          await ctx.reply(`Anda sudah memiliki spreadsheet untuk pencatatan keuangan:\n*${doc.title}*`, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.url('Buka Spreadsheet', userSheetData.spreadsheetUrl)],
+                [Markup.button.callback('Verifikasi Ulang', 'verify_access')],
+                [Markup.button.callback('Ganti Spreadsheet', 'change_spreadsheet')]
+              ]
+            }
+          });
+        } catch (error) {
+          console.error('Error loading existing spreadsheet:', error);
+          await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+          await ctx.reply(`Anda sudah memiliki spreadsheet terdaftar, tetapi terjadi masalah saat mengaksesnya. Apakah ingin memperbarui?`, {
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('Verifikasi Ulang', 'verify_access')],
+                [Markup.button.callback('Ganti Spreadsheet', 'change_spreadsheet')]
+              ]
+            }
+          });
+        }
+        
+        return;
+      }
+      
+      // User belum memiliki spreadsheet
+      await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+      await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
+      await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
+    } catch (error) {
+      console.error('Error in scene enter:', error);
+      await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+      await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
+      await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
+    }
   });
 
   // Handler untuk input teks
@@ -61,7 +110,7 @@ const stage = new Scenes.Stage([createSetupSpreadsheetScene()]);
 bot.use(session());
 bot.use(stage.middleware());
 
-// Command handlers dengan implementasi langsung tanpa state kompleks
+// Command handlers
 bot.command('start', async (ctx) => {
   try {
     // Keluar dari scene aktif apapun
@@ -81,19 +130,33 @@ bot.command('start', async (ctx) => {
   }
 });
 
+// Handler untuk ganti spreadsheet
+bot.action('change_spreadsheet', async (ctx) => {
+  try {
+    await ctx.answerCbQuery('Mengubah spreadsheet...');
+    await ctx.editMessageText('📊 Silakan bagikan link Google Spreadsheet baru Anda:');
+    
+    // Masuk ke scene setup
+    return ctx.scene.enter('setup-spreadsheet');
+  } catch (error) {
+    console.error('Change spreadsheet error:', error);
+    return ctx.reply('❌ Gagal mengubah spreadsheet. Silakan coba lagi dengan /start');
+  }
+});
+
 // Handler untuk verifikasi akses
 bot.action('verify_access', async (ctx) => {
   try {
     await ctx.answerCbQuery('Memverifikasi...');
     
     const userId = ctx.from.id;
-    const userSheetUrl = await getUsersSheetUrl(userId);
+    const userSheetData = await getUserSheetData(userId);
     
-    if (!userSheetUrl) {
+    if (!userSheetData || !userSheetData.spreadsheetUrl) {
       return ctx.editMessageText('❌ Data tidak ditemukan. Gunakan /start untuk memulai ulang');
     }
 
-    const sheetId = extractSheetIdFromUrl(userSheetUrl);
+    const sheetId = extractSheetIdFromUrl(userSheetData.spreadsheetUrl);
     if (!sheetId) {
       return ctx.editMessageText('❌ Format URL tidak valid. Gunakan /start untuk memulai ulang');
     }
@@ -133,15 +196,32 @@ bot.action('verify_access', async (ctx) => {
     
     try {
       return await ctx.editMessageText(
-        `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
-        `Update terakhir: ${updateDate}\n` +
-        `[${timestamp}]`
+        `✅ Verifikasi berhasil!\nJudul: *${doc.title}*\n` +
+        `Update terakhir: ${updateDate}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.url('Buka Spreadsheet', userSheetData.spreadsheetUrl)],
+              [Markup.button.callback('Ganti Spreadsheet', 'change_spreadsheet')]
+            ]
+          }
+        }
       );
     } catch (editError) {
       if (editError.description?.includes('message is not modified')) {
         return await ctx.reply(
-          `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
-          `Update terakhir: ${updateDate}`
+          `✅ Verifikasi berhasil!\nJudul: *${doc.title}*\n` +
+          `Update terakhir: ${updateDate}`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.url('Buka Spreadsheet', userSheetData.spreadsheetUrl)],
+                [Markup.button.callback('Ganti Spreadsheet', 'change_spreadsheet')]
+              ]
+            }
+          }
         );
       }
       throw editError;
@@ -150,7 +230,8 @@ bot.action('verify_access', async (ctx) => {
   } catch (error) {
     console.error('Verification error:', error);
     const serviceAccountEmail = SERVICE_ACCOUNT_CREDENTIALS.client_email;
-    const sheetId = extractSheetIdFromUrl(await getUsersSheetUrl(ctx.from.id)) || '';
+    const userSheetData = await getUserSheetData(ctx.from.id);
+    const sheetId = userSheetData ? extractSheetIdFromUrl(userSheetData.spreadsheetUrl) : '';
     
     try {
       return await ctx.editMessageText(
@@ -159,11 +240,15 @@ bot.action('verify_access', async (ctx) => {
         `2. Permission "Editor"\n` +
         `3. Link valid\n` +
         `4. Tunggu 1 menit setelah share`,
-        Markup.inlineKeyboard([
-          Markup.button.callback('🔄 Coba Lagi', `verify_access`),
-          Markup.button.url('Buka Spreadsheet', `https://docs.google.com/spreadsheets/d/${sheetId}/edit`),
-          Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${sheetId}/share`)
-        ])
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [Markup.button.callback('🔄 Coba Lagi', `verify_access`)],
+              [Markup.button.url('Buka Spreadsheet', `https://docs.google.com/spreadsheets/d/${sheetId}/edit`)],
+              [Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${sheetId}/share`)]
+            ]
+          }
+        }
       );
     } catch (editError) {
       if (editError.description?.includes('message is not modified')) {
@@ -172,7 +257,16 @@ bot.action('verify_access', async (ctx) => {
           `1. Dibagikan ke: ${serviceAccountEmail}\n` +
           `2. Permission "Editor"\n` +
           `3. Link valid\n` +
-          `4. Tunggu 1 menit setelah share`
+          `4. Tunggu 1 menit setelah share`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [Markup.button.callback('🔄 Coba Lagi', `verify_access`)],
+                [Markup.button.url('Buka Spreadsheet', `https://docs.google.com/spreadsheets/d/${sheetId}/edit`)],
+                [Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${sheetId}/share`)]
+              ]
+            }
+          }
         );
       }
       throw editError;
@@ -252,7 +346,7 @@ async function saveUserData(userData) {
   }
 }
 
-async function getUsersSheetUrl(userId) {
+async function getUserSheetData(userId) {
   try {
     const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
     await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
@@ -284,20 +378,31 @@ async function getUsersSheetUrl(userId) {
       }
     });
 
-    // Akses data dengan cara yang sama
+    // Akses data dengan cara yang sama dan buat objek lengkap
     if (userRow) {
       try {
-        return typeof userRow.get === 'function' 
-          ? userRow.get('Spreadsheet URL')
-          : userRow._rawData?.[2]?.trim();
+        const userData = {
+          userId: userId.toString(),
+          username: typeof userRow.get === 'function' 
+            ? userRow.get('Username') 
+            : userRow._rawData?.[1]?.trim(),
+          spreadsheetUrl: typeof userRow.get === 'function' 
+            ? userRow.get('Spreadsheet URL')
+            : userRow._rawData?.[2]?.trim(),
+          registeredAt: typeof userRow.get === 'function' 
+            ? userRow.get('Registered At')
+            : userRow._rawData?.[3]?.trim()
+        };
+        return userData;
       } catch (e) {
+        console.error('Error accessing user data:', e);
         return null;
       }
     }
     
     return null;
   } catch (e) {
-    console.error('Error fetching user sheet URL:', e);
+    console.error('Error fetching user sheet data:', e);
     return null;
   }
 }
@@ -359,7 +464,7 @@ export default async (req, res) => {
       return res.status(200).json({ 
         status: 'Bot Finance Active',
         timestamp: new Date().toISOString(),
-        version: '1.1.0'
+        version: '1.2.0'
       });
     }
   } catch (err) {
