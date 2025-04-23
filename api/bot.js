@@ -177,13 +177,22 @@ function createManualVerifyScene() {
 
 bot.action('change_spreadsheet', async (ctx) => {
   try {
+    // Ensure session is initialized
     if (!ctx.session) {
-      ctx.session = {}; // Inisialisasi sesi jika belum ada
+      ctx.session = {}; // Initialize session if it doesn't exist
     }
+    
     await ctx.answerCbQuery();
     ctx.session.isChangingSpreadsheet = true;
-    await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
-    return ctx.scene.enter('setup-spreadsheet');
+    
+    // Check if the scene is defined before entering
+    if (ctx.scene) {
+      await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
+      return ctx.scene.enter('setup-spreadsheet');
+    } else {
+      console.error('Scene not defined');
+      ctx.reply('❌ Gagal memulai proses perubahan. Silakan coba /start');
+    }
   } catch (error) {
     console.error('Change spreadsheet error:', error);
     ctx.reply('❌ Gagal memulai proses perubahan. Silakan coba /start');
