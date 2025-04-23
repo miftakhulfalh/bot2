@@ -159,13 +159,38 @@ async function getUsersSheetUrl(userId) {
   await doc.loadInfo();
 
   const sheet = doc.sheetsByIndex[0];
+  
+  // Pastikan header terisi
+  if (!sheet.headerValues || sheet.headerValues.length === 0) {
+    await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
+  }
+
   const rows = await sheet.getRows();
   
-  const userRow = rows.find(row => 
-    row.get('User ID') === userId.toString()
-  );
+  // Cari dengan error handling dan fallback
+  const userRow = rows.find(row => {
+    try {
+      // Cara 1: Gunakan get() jika tersedia
+      if (typeof row.get === 'function') {
+        return row.get('User ID') === userId.toString();
+      }
+      
+      // Cara 2: Akses langsung via _rawData (fallback)
+      return row._rawData[0]?.trim() === userId.toString();
+    } catch (e) {
+      console.error('Error processing row:', e);
+      return false;
+    }
+  });
+
+  // Akses data dengan cara yang sama
+  if (userRow) {
+    return typeof userRow.get === 'function' 
+      ? userRow.get('Spreadsheet URL')
+      : userRow._rawData[2]?.trim();
+  }
   
-  return userRow?.get('Spreadsheet URL');
+  return null;
 }
 
 // Error handling
