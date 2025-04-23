@@ -9,35 +9,27 @@ const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID;
 
 // Inisialisasi Bot
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const stage = new Scenes.Stage([setupSpreadsheetScene()]);
 
-// Middleware
-bot.use(session({ 
-  defaultSession: () => ({ isNew: true }) 
-}));
-bot.use(stage.middleware());
-
-// Scene untuk setup spreadsheet
-function setupSpreadsheetScene() {
+// Fungsi untuk membuat setup scene
+function createSetupSpreadsheetScene() {
   const scene = new Scenes.BaseScene('setup-spreadsheet');
   
+  // Definisikan tindakan saat scene dimulai
   scene.enter(async (ctx) => {
-    // Menghindari mengirim pesan duplikat
-    if (!ctx.session?.messageShown) {
-      await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
-      await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
-      ctx.session.messageShown = true;
-    }
+    await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+    await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
+    await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
   });
 
+  // Handler untuk input teks
   scene.on('text', async (ctx) => {
-    try {
-      const spreadsheetUrl = ctx.message.text.trim();
-      
-      if (!validateGoogleSheetUrl(spreadsheetUrl)) {
-        return ctx.reply('❌ Format URL tidak valid. Pastikan link berupa Google Sheet!');
-      }
+    const spreadsheetUrl = ctx.message.text.trim();
+    
+    if (!validateGoogleSheetUrl(spreadsheetUrl)) {
+      return ctx.reply('❌ Format URL tidak valid. Pastikan link berupa Google Sheet!');
+    }
 
+    try {
       const userData = {
         userId: ctx.from.id,
         username: ctx.from.username || `${ctx.from.first_name}${ctx.from.last_name ? ' ' + ctx.from.last_name : ''}`,
@@ -64,25 +56,36 @@ function setupSpreadsheetScene() {
   return scene;
 }
 
-// Command handlers
+// Setup scene dan session
+const stage = new Scenes.Stage([createSetupSpreadsheetScene()]);
+bot.use(session());
+bot.use(stage.middleware());
+
+// Command handlers dengan implementasi langsung tanpa state kompleks
 bot.command('start', async (ctx) => {
   try {
-    // Reset session saat /start
-    ctx.session = { isNew: true, messageShown: false };
+    // Keluar dari scene aktif apapun
+    if (ctx.scene) {
+      try {
+        await ctx.scene.leave();
+      } catch (e) {
+        console.log('No active scene to leave');
+      }
+    }
     
-    // Pastikan keluar dari scene sebelumnya jika ada
-    if (ctx.scene?.current) await ctx.scene.leave();
-    
-    await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
+    // Masuk ke scene setup
     return ctx.scene.enter('setup-spreadsheet');
   } catch (error) {
     console.error('Start command error:', error);
-    return ctx.reply('❌ Gagal memulai. Silakan coba lagi.');
+    return ctx.reply('❌ Gagal memulai. Silakan coba lagi dengan /start');
   }
 });
 
+// Handler untuk verifikasi akses
 bot.action('verify_access', async (ctx) => {
   try {
+    await ctx.answerCbQuery('Memverifikasi...');
+    
     const userId = ctx.from.id;
     const userSheetUrl = await getUsersSheetUrl(userId);
     
@@ -90,7 +93,12 @@ bot.action('verify_access', async (ctx) => {
       return ctx.editMessageText('❌ Data tidak ditemukan. Gunakan /start untuk memulai ulang');
     }
 
-    const doc = new GoogleSpreadsheet(extractSheetIdFromUrl(userSheetUrl));
+    const sheetId = extractSheetIdFromUrl(userSheetUrl);
+    if (!sheetId) {
+      return ctx.editMessageText('❌ Format URL tidak valid. Gunakan /start untuk memulai ulang');
+    }
+
+    const doc = new GoogleSpreadsheet(sheetId);
     await doc.useServiceAccountAuth({
       client_email: SERVICE_ACCOUNT_CREDENTIALS.client_email,
       private_key: SERVICE_ACCOUNT_CREDENTIALS.private_key
@@ -106,7 +114,7 @@ bot.action('verify_access', async (ctx) => {
     try {
       if (doc.updateTime) {
         const date = new Date(doc.updateTime);
-        if (!isNaN(date.getTime())) { // Validasi tanggal valid
+        if (!isNaN(date.getTime())) {
           updateDate = date.toLocaleString('id-ID', {
             year: 'numeric',
             month: 'long',
@@ -120,41 +128,55 @@ bot.action('verify_access', async (ctx) => {
       console.error('Date formatting error:', dateError);
     }
 
-    // Tangani kasus edit message yang identik
+    // Tambahkan timestamp untuk menghindari error "message is not modified"
+    const timestamp = Date.now();
+    
     try {
       return await ctx.editMessageText(
         `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
-        `Update terakhir: ${updateDate}`
+        `Update terakhir: ${updateDate}\n` +
+        `[${timestamp}]`
       );
     } catch (editError) {
       if (editError.description?.includes('message is not modified')) {
-        // Jika pesan sama, tambahkan timestamp untuk menghindari error
-        return await ctx.editMessageText(
+        return await ctx.reply(
           `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
-          `Update terakhir: ${updateDate}\n` +
-          `Diverifikasi: ${new Date().toLocaleTimeString('id-ID')}`
+          `Update terakhir: ${updateDate}`
         );
       }
-      throw editError; // Lanjutkan dengan error asli jika bukan masalah 'message not modified'
+      throw editError;
     }
     
   } catch (error) {
     console.error('Verification error:', error);
     const serviceAccountEmail = SERVICE_ACCOUNT_CREDENTIALS.client_email;
-    const sheetId = ctx.match?.[1] ? ctx.match[1] : extractSheetIdFromUrl(await getUsersSheetUrl(ctx.from.id)) || '';
+    const sheetId = extractSheetIdFromUrl(await getUsersSheetUrl(ctx.from.id)) || '';
     
-    return ctx.editMessageText(
-      `❌ Gagal verifikasi. Pastikan:\n` +
-      `1. Dibagikan ke: ${serviceAccountEmail}\n` +
-      `2. Permission "Editor"\n` +
-      `3. Link valid\n` +
-      `4. Tunggu 1 menit setelah share`,
-      Markup.inlineKeyboard([
-        Markup.button.callback('🔄 Coba Lagi', 'verify_access'),
-        Markup.button.url('Buka Spreadsheet', `https://docs.google.com/spreadsheets/d/${sheetId}/edit`),
-        Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${sheetId}/share`)
-      ])
-    );
+    try {
+      return await ctx.editMessageText(
+        `❌ Gagal verifikasi. Pastikan:\n` +
+        `1. Dibagikan ke: ${serviceAccountEmail}\n` +
+        `2. Permission "Editor"\n` +
+        `3. Link valid\n` +
+        `4. Tunggu 1 menit setelah share`,
+        Markup.inlineKeyboard([
+          Markup.button.callback('🔄 Coba Lagi', `verify_access`),
+          Markup.button.url('Buka Spreadsheet', `https://docs.google.com/spreadsheets/d/${sheetId}/edit`),
+          Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${sheetId}/share`)
+        ])
+      );
+    } catch (editError) {
+      if (editError.description?.includes('message is not modified')) {
+        return await ctx.reply(
+          `❌ Gagal verifikasi. Pastikan:\n` +
+          `1. Dibagikan ke: ${serviceAccountEmail}\n` +
+          `2. Permission "Editor"\n` +
+          `3. Link valid\n` +
+          `4. Tunggu 1 menit setelah share`
+        );
+      }
+      throw editError;
+    }
   }
 });
 
@@ -164,6 +186,7 @@ function validateGoogleSheetUrl(url) {
 }
 
 function extractSheetIdFromUrl(url) {
+  if (!url) return null;
   const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
   return match?.[1] || null;
 }
@@ -182,82 +205,168 @@ async function saveUserData(userData) {
     await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
   }
 
-  await sheet.addRow({
-    'User ID': userData.userId.toString(),
-    'Username': userData.username,
-    'Spreadsheet URL': userData.spreadsheetUrl,
-    'Registered At': userData.registeredAt
-  });
-
-  await sheet.saveUpdatedCells();
-}
-
-async function getUsersSheetUrl(userId) {
-  const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
-  await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
-  await doc.loadInfo();
-
-  const sheet = doc.sheetsByIndex[0];
-  
-  // Pastikan header terisi
-  if (!sheet.headerValues || sheet.headerValues.length === 0) {
-    await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
-  }
-
-  const rows = await sheet.getRows();
-  
-  // Cari dengan error handling dan fallback
-  const userRow = rows.find(row => {
+  // Cek apakah user sudah ada
+  const existingRows = await sheet.getRows();
+  const existingUser = existingRows.find(row => {
     try {
-      // Cara 1: Gunakan get() jika tersedia
-      if (typeof row.get === 'function') {
-        return row.get('User ID') === userId.toString();
-      }
-      
-      // Cara 2: Akses langsung via _rawData (fallback)
-      return row._rawData[0]?.trim() === userId.toString();
+      return (row.get('User ID') === userData.userId.toString() || 
+              row._rawData?.[0] === userData.userId.toString());
     } catch (e) {
-      console.error('Error processing row:', e);
       return false;
     }
   });
 
-  // Akses data dengan cara yang sama
-  if (userRow) {
-    return typeof userRow.get === 'function' 
-      ? userRow.get('Spreadsheet URL')
-      : userRow._rawData[2]?.trim();
+  if (existingUser) {
+    // Update data yang sudah ada
+    try {
+      if (typeof existingUser.set === 'function') {
+        existingUser.set('Spreadsheet URL', userData.spreadsheetUrl);
+        existingUser.set('Username', userData.username);
+        await existingUser.save();
+      } else {
+        // Fallback jika method set tidak tersedia
+        const rowIndex = existingRows.indexOf(existingUser);
+        await sheet.loadCells();
+        sheet.getCell(rowIndex + 1, 2).value = userData.username;
+        sheet.getCell(rowIndex + 1, 3).value = userData.spreadsheetUrl;
+        await sheet.saveUpdatedCells();
+      }
+    } catch (e) {
+      console.error('Error updating existing user:', e);
+      // Jika gagal update, tambahkan baris baru
+      await sheet.addRow({
+        'User ID': userData.userId.toString(),
+        'Username': userData.username,
+        'Spreadsheet URL': userData.spreadsheetUrl,
+        'Registered At': userData.registeredAt
+      });
+    }
+  } else {
+    // Tambah user baru
+    await sheet.addRow({
+      'User ID': userData.userId.toString(),
+      'Username': userData.username,
+      'Spreadsheet URL': userData.spreadsheetUrl,
+      'Registered At': userData.registeredAt
+    });
   }
-  
-  return null;
+}
+
+async function getUsersSheetUrl(userId) {
+  try {
+    const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
+    await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
+    await doc.loadInfo();
+
+    const sheet = doc.sheetsByIndex[0];
+    if (!sheet) return null;
+    
+    // Pastikan header terisi
+    if (!sheet.headerValues || sheet.headerValues.length === 0) {
+      await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
+    }
+
+    const rows = await sheet.getRows();
+    if (!rows || rows.length === 0) return null;
+    
+    // Cari dengan error handling dan fallback
+    const userRow = rows.find(row => {
+      try {
+        // Cara 1: Gunakan get() jika tersedia
+        if (typeof row.get === 'function') {
+          return row.get('User ID') === userId.toString();
+        }
+        
+        // Cara 2: Akses langsung via _rawData (fallback)
+        return row._rawData?.[0]?.trim() === userId.toString();
+      } catch (e) {
+        return false;
+      }
+    });
+
+    // Akses data dengan cara yang sama
+    if (userRow) {
+      try {
+        return typeof userRow.get === 'function' 
+          ? userRow.get('Spreadsheet URL')
+          : userRow._rawData?.[2]?.trim();
+      } catch (e) {
+        return null;
+      }
+    }
+    
+    return null;
+  } catch (e) {
+    console.error('Error fetching user sheet URL:', e);
+    return null;
+  }
 }
 
 // Error handling
 bot.catch((err, ctx) => {
   console.error('Global Bot Error:', err);
-  ctx.reply('⚠️ Terjadi kesalahan sistem. Silakan coba lagi.');
+  if (ctx && ctx.reply) {
+    ctx.reply('⚠️ Terjadi kesalahan sistem. Silakan coba lagi.');
+  }
 });
 
-// Vercel handler
+// Middleware untuk logging setiap request
+bot.use((ctx, next) => {
+  console.log(`Processing update ${ctx.update.update_id}`);
+  return next();
+});
+
+// Function untuk memproses webhook updates
+async function processBotUpdate(update) {
+  try {
+    await bot.handleUpdate(update);
+    return true;
+  } catch (error) {
+    console.error('Error processing update:', error);
+    return false;
+  }
+}
+
+// Vercel serverless handler
 export default async (req, res) => {
-  if (req.method === 'POST') {
-    try {
-      let update = req.body;
-      if (typeof update === 'string') update = JSON.parse(update);
+  try {
+    console.log(`Received ${req.method} request`);
+    
+    if (req.method === 'POST') {
+      // Handle webhook update
+      let update;
+      try {
+        update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+        console.log('Processing webhook update:', update?.update_id);
+      } catch (e) {
+        console.error('Error parsing update:', e);
+        return res.status(400).json({ error: 'Invalid update format' });
+      }
       
-      await bot.handleUpdate(update);
-      return res.status(200).send('OK');
-    } catch (err) {
-      console.error('Bot endpoint error:', err);
-      return res.status(500).json({ 
-        error: 'Internal Server Error',
-        message: err.message 
+      if (!update) {
+        return res.status(400).json({ error: 'No update data provided' });
+      }
+      
+      try {
+        await processBotUpdate(update);
+        return res.status(200).send('OK');
+      } catch (e) {
+        console.error('Error in bot update:', e);
+        return res.status(500).json({ error: 'Bot processing error', details: e.message });
+      }
+    } else {
+      // Handle health check
+      return res.status(200).json({ 
+        status: 'Bot Finance Active',
+        timestamp: new Date().toISOString(),
+        version: '1.1.0'
       });
     }
+  } catch (err) {
+    console.error('Unhandled error in serverless function:', err);
+    return res.status(500).json({ 
+      error: 'Internal Server Error',
+      message: err.message 
+    });
   }
-  
-  return res.status(200).json({ 
-    status: 'Bot Finance Active',
-    timestamp: new Date().toISOString() 
-  });
 };
