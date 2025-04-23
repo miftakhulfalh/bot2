@@ -54,10 +54,16 @@ function setupSpreadsheetScene() {
   return scene;
 }
 
-// Command handlers
+// Perbaiki handler /start
 bot.command('start', async (ctx) => {
-  await ctx.reply(`👋 Halo ${ctx.from.first_name}! Saya akan membantu mencatat keuangan Anda.`);
-  await ctx.scene.enter('setup-spreadsheet');
+  // Hapus semua session sebelumnya
+  ctx.session = null;
+  
+  await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*! Saya akan membantu mencatat keuangan Anda.`);
+  await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
+  
+  // Masuk ke scene tanpa explicit enter
+  return ctx.scene.enter('setup-spreadsheet');
 });
 
 // Action untuk verifikasi akses
@@ -84,14 +90,10 @@ bot.action('verify_access', async (ctx) => {
   }
 });
 
-// Fungsi helper
+// Perbaiki validasi URL
 function validateGoogleSheetUrl(url) {
-  return url.startsWith('https://docs.google.com/spreadsheets/d/');
-}
-
-function extractSheetIdFromUrl(url) {
-  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return match ? match[1] : null;
+  const pattern = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9-_]+(\/.*)?$/;
+  return pattern.test(url.trim());
 }
 
 async function saveUserData(userData) {
@@ -99,9 +101,15 @@ async function saveUserData(userData) {
   await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
   await doc.loadInfo();
   
+  // Gunakan sheet pertama dan inisialisasi jika kosong
   const sheet = doc.sheetsByIndex[0];
+  if (sheet.headerValues?.length === 0) {
+    await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
+  }
+
+  // Tambahkan row dengan format yang sesuai
   await sheet.addRow({
-    'User ID': userData.userId,
+    'User ID': userData.userId.toString(),
     'Username': userData.username,
     'Spreadsheet URL': userData.spreadsheetUrl,
     'Registered At': userData.registeredAt
