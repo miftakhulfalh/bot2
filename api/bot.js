@@ -80,39 +80,52 @@ bot.command('start', async (ctx) => {
   }
 });
 
-// Di action verify_access (perbaikan reference error)
+// Di action verify_access (perbaikan final)
 bot.action('verify_access', async (ctx) => {
   try {
     const userId = ctx.from.id;
     const userSheetUrl = await getUsersSheetUrl(userId);
     
     if (!userSheetUrl) {
-      return ctx.editMessageText('❌ Data tidak ditemukan. Gunakan /start untuk registrasi ulang');
+      return ctx.editMessageText('❌ Data tidak ditemukan. Gunakan /start untuk memulai ulang');
     }
 
+    // Tambahkan log untuk debug
+    console.log('Mencoba mengakses spreadsheet:', userSheetUrl);
+    
     const doc = new GoogleSpreadsheet(extractSheetIdFromUrl(userSheetUrl));
-    await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
-    await doc.loadInfo();
+    await doc.useServiceAccountAuth({
+      client_email: SERVICE_ACCOUNT_CREDENTIALS.client_email,
+      private_key: SERVICE_ACCOUNT_CREDENTIALS.private_key
+    });
+    
+    // Paksa load dengan timeout
+    await Promise.race([
+      doc.loadInfo(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+    ]);
 
     await ctx.editMessageText(
-      `✅ Akses valid! Judul: ${doc.title}\n` +
-      `Total Sheet: ${doc.sheetCount}`
+      `✅ Verifikasi berhasil! Judul: ${doc.title}\n` +
+      `Terakhir diupdate: ${new Date(doc.updateTime).toLocaleString()}`
     );
     
   } catch (error) {
     console.error('Verification error:', error);
     
-    // Dapatkan ulang URL untuk error handling
-    const userSheetUrl = await getUsersSheetUrl(ctx.from.id).catch(() => null);
+    // Dapatkan email service account
+    const serviceAccountEmail = SERVICE_ACCOUNT_CREDENTIALS.client_email;
     
     await ctx.editMessageText(
       `❌ Gagal verifikasi. Pastikan:\n` +
-      `1. Spreadsheet dibagikan ke: ${SERVICE_ACCOUNT_CREDENTIALS.client_email}\n` +
-      '2. Permission "Editor"\n' +
-      '3. Link valid',
+      `1. Spreadsheet DIBAGIKAN ke: ${serviceAccountEmail}\n` +
+      '2. Permission "Editor"\n` +
+      '3. Link valid\n' +
+      '4. Tunggu 1 menit setelah share',
       Markup.inlineKeyboard([
         Markup.button.callback('🔄 Coba Lagi', 'verify_access'),
-        ...(userSheetUrl ? [Markup.button.url('Buka Spreadsheet', userSheetUrl)] : [])
+        Markup.button.url('Buka Spreadsheet', userSheetUrl),
+        Markup.button.url('Bagikan Ulang', `https://docs.google.com/spreadsheets/d/${extractSheetIdFromUrl(userSheetUrl)}/share`)
       ])
     );
   }
@@ -133,6 +146,9 @@ async function saveUserData(userData) {
   const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
   await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
   await doc.loadInfo();
+
+  // Tambahkan delay untuk memastikan permissions propagate
+  await new Promise(resolve => setTimeout(resolve, 2000));
 
   // Buat sheet jika belum ada
   let sheet;
@@ -163,36 +179,26 @@ async function saveUserData(userData) {
   await sheet.saveUpdatedCells();
 }
 
-// Di fungsi getUsersSheetUrl (perbaikan inisialisasi sheet)
+// Di fungsi getUsersSheetUrl (final fix)
 async function getUsersSheetUrl(userId) {
   const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
   await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
   await doc.loadInfo();
 
-  // Handle jika sheet belum ada
-  let sheet;
-  try {
-    sheet = doc.sheetsByIndex[0];
-  } catch {
-    sheet = await doc.addSheet({
-      title: 'Master Data',
-      headerValues: ['User ID', 'Username', 'Spreadsheet URL', 'Registered At']
-    });
-  }
-
-  // Pastikan header terisi
-  if (!sheet.headerValues || sheet.headerValues.length === 0) {
-    await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
-  }
-
+  const sheet = doc.sheetsByIndex[0];
   const rows = await sheet.getRows();
   
-  // Cari dengan mekanisme fallback
-  const userRow = rows.find(row => 
-    row._rawData[0]?.trim() === userId.toString()
-  );
-
-  return userRow?._rawData[2]; // Ambil dari kolom index 2
+  // Gunakan find dengan error handling
+  const userRow = rows.find(row => {
+    try {
+      return row.get('User ID') === userId.toString();
+    } catch (e) {
+      console.warn('Error row:', row?._rawData);
+      return false;
+    }
+  });
+  
+  return userRow?.get('Spreadsheet URL');
 }
 
 
