@@ -177,6 +177,9 @@ function createManualVerifyScene() {
 
 bot.action('change_spreadsheet', async (ctx) => {
   try {
+    if (!ctx.session) {
+      ctx.session = {}; // Inisialisasi sesi jika belum ada
+    }
     await ctx.answerCbQuery();
     ctx.session.isChangingSpreadsheet = true;
     await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
