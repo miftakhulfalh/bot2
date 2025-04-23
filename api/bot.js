@@ -214,38 +214,22 @@ async function saveUserData(userData, ctx) {
     });
   }
 
-  // Cek header
   if (!sheet.headerValues?.length) {
     await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
   }
 
-  // Cari user existing
   const rows = await sheet.getRows();
   const existingRowIndex = rows.findIndex(row => 
-    row.get('User ID') === userData.userId.toString() || 
-    row._rawData[0] === userData.userId.toString()
+    row['User ID'] === userData.userId.toString()
   );
 
   if (existingRowIndex > -1) {
-    // Update row existing
     const row = rows[existingRowIndex];
-    if (typeof row.set === 'function') {
-      row.set('Username', userData.username);
-      row.set('Spreadsheet URL', userData.spreadsheetUrl);
-      row.set('Registered At', userData.registeredAt);
-      await row.save();
-    } else {
-      // Fallback manual update
-      await sheet.loadCells();
-      const targetRow = existingRowIndex + 1;
-      sheet.getCell(targetRow, 1).value = userData.userId.toString();
-      sheet.getCell(targetRow, 2).value = userData.username;
-      sheet.getCell(targetRow, 3).value = userData.spreadsheetUrl;
-      sheet.getCell(targetRow, 4).value = userData.registeredAt;
-      await sheet.saveUpdatedCells();
-    }
+    row['Username'] = userData.username;
+    row['Spreadsheet URL'] = userData.spreadsheetUrl;
+    row['Registered At'] = userData.registeredAt;
+    await row.save();
   } else {
-    // Tambah baru
     await sheet.addRow({
       'User ID': userData.userId.toString(),
       'Username': userData.username,
@@ -254,7 +238,6 @@ async function saveUserData(userData, ctx) {
     });
   }
 
-  // Reset session change flag
   if (ctx?.session) {
     ctx.session.isChangingSpreadsheet = false;
   }
@@ -271,17 +254,16 @@ async function getUserSheetData(userId) {
 
     const rows = await sheet.getRows();
     const userRow = rows.find(row => 
-      row.get('User ID') === userId.toString() || 
-      row._rawData[0] === userId.toString()
+      row['User ID'] === userId.toString()
     );
 
     if (!userRow) return null;
 
     return {
-      userId: userRow.get('User ID') || userRow._rawData[0],
-      username: userRow.get('Username') || userRow._rawData[1],
-      spreadsheetUrl: userRow.get('Spreadsheet URL') || userRow._rawData[2],
-      registeredAt: userRow.get('Registered At') || userRow._rawData[3]
+      userId: userRow['User ID'],
+      username: userRow['Username'],
+      spreadsheetUrl: userRow['Spreadsheet URL'],
+      registeredAt: userRow['Registered At']
     };
   } catch (error) {
     console.error('Get user data error:', error);
