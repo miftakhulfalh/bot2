@@ -13,7 +13,7 @@ const stage = new Scenes.Stage([setupSpreadsheetScene()]);
 
 // Middleware
 bot.use(session({ 
-  defaultSession: () => ({}) 
+  defaultSession: () => ({ isNew: true }) 
 }));
 bot.use(stage.middleware());
 
@@ -22,8 +22,12 @@ function setupSpreadsheetScene() {
   const scene = new Scenes.BaseScene('setup-spreadsheet');
   
   scene.enter(async (ctx) => {
-    await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
-    await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
+    // Menghindari mengirim pesan duplikat
+    if (!ctx.session?.messageShown) {
+      await ctx.reply('📊 Silakan bagikan link Google Spreadsheet Anda:');
+      await ctx.reply('Contoh format:\nhttps://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit');
+      ctx.session.messageShown = true;
+    }
   });
 
   scene.on('text', async (ctx) => {
@@ -63,8 +67,11 @@ function setupSpreadsheetScene() {
 // Command handlers
 bot.command('start', async (ctx) => {
   try {
-    ctx.session = {};
-    if (ctx.scene.current) await ctx.scene.leave();
+    // Reset session saat /start
+    ctx.session = { isNew: true, messageShown: false };
+    
+    // Pastikan keluar dari scene sebelumnya jika ada
+    if (ctx.scene?.current) await ctx.scene.leave();
     
     await ctx.replyWithMarkdown(`👋 Halo *${ctx.from.first_name}*!`);
     return ctx.scene.enter('setup-spreadsheet');
@@ -94,10 +101,42 @@ bot.action('verify_access', async (ctx) => {
       new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
     ]);
 
-    return ctx.editMessageText(
-      `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
-      `Update terakhir: ${new Date(doc.updateTime).toLocaleString()}`
-    );
+    // Format tanggal dengan benar
+    let updateDate = "Tidak tersedia";
+    try {
+      if (doc.updateTime) {
+        const date = new Date(doc.updateTime);
+        if (!isNaN(date.getTime())) { // Validasi tanggal valid
+          updateDate = date.toLocaleString('id-ID', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
+      }
+    } catch (dateError) {
+      console.error('Date formatting error:', dateError);
+    }
+
+    // Tangani kasus edit message yang identik
+    try {
+      return await ctx.editMessageText(
+        `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
+        `Update terakhir: ${updateDate}`
+      );
+    } catch (editError) {
+      if (editError.description?.includes('message is not modified')) {
+        // Jika pesan sama, tambahkan timestamp untuk menghindari error
+        return await ctx.editMessageText(
+          `✅ Verifikasi berhasil!\nJudul: ${doc.title}\n` +
+          `Update terakhir: ${updateDate}\n` +
+          `Diverifikasi: ${new Date().toLocaleTimeString('id-ID')}`
+        );
+      }
+      throw editError; // Lanjutkan dengan error asli jika bukan masalah 'message not modified'
+    }
     
   } catch (error) {
     console.error('Verification error:', error);
