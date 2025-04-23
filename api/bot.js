@@ -103,13 +103,15 @@ bot.action('verify_access', async (ctx) => {
     
   } catch (error) {
     console.error('Verification error:', error);
+    // Tampilkan tombol ulangi jika gagal
     await ctx.editMessageText(
-      '❌ Gagal mengakses spreadsheet. Pastikan:\n' +
-      '1. Sudah dibagikan ke: ' + SERVICE_ACCOUNT_CREDENTIALS.client_email + '\n' +
-      '2. Permission set ke "Editor"\n' +
+      '❌ Verifikasi gagal. Pastikan:\n' +
+      `1. Spreadsheet dibagikan ke: ${SERVICE_ACCOUNT_CREDENTIALS.client_email}\n` +
+      '2. Permission "Editor"\n' +
       '3. Link valid',
-      Markup.inlineKeyboard([ // Tambahkan tombol verifikasi ulang
-        Markup.button.callback('🔁 Coba Verifikasi Lagi', 'verify_access')
+      Markup.inlineKeyboard([
+        Markup.button.callback('🔄 Coba Lagi', 'verify_access'),
+        Markup.button.url('Buka Spreadsheet', userSheetUrl)
       ])
     );
   }
@@ -125,59 +127,67 @@ function extractSheetIdFromUrl(url) {
   return match ? match[1] : null;
 }
 
-// Di fungsi saveUserData (perbaikan no 3)
+// Di fungsi saveUserData (perbaikan validasi)
 async function saveUserData(userData) {
   const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
   await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
   await doc.loadInfo();
 
+  // Handle jika sheet belum ada
   let sheet;
   try {
     sheet = doc.sheetsByIndex[0];
-  } catch (e) {
-    sheet = await doc.addSheet({ 
-      title: 'Users',
+  } catch {
+    sheet = await doc.addSheet({
+      title: 'Master Data',
       headerValues: ['User ID', 'Username', 'Spreadsheet URL', 'Registered At']
     });
   }
 
-  // Pastikan header ada
+  // Force update headers jika diperlukan
   if (!sheet.headerValues || sheet.headerValues.length === 0) {
     await sheet.setHeaderRow(['User ID', 'Username', 'Spreadsheet URL', 'Registered At']);
+    await sheet.updateProperties({ title: 'Master Data' });
   }
 
-  // Tambahkan row baru
-  await sheet.addRow({
-    'User ID': userData.userId.toString(),
-    'Username': userData.username,
-    'Spreadsheet URL': userData.spreadsheetUrl,
-    'Registered At': userData.registeredAt
-  });
+  // Tambahkan data dengan metode lebih reliable
+  await sheet.addRow([
+    userData.userId.toString(),
+    userData.username,
+    userData.spreadsheetUrl,
+    userData.registeredAt
+  ]);
 
-  // Force update
+  // Pastikan data tersimpan
   await sheet.saveUpdatedCells();
 }
 
-// Di fungsi getUsersSheetUrl (perbaikan no 2)
+// Di fungsi getUsersSheetUrl (perbaikan utama)
 async function getUsersSheetUrl(userId) {
   const doc = new GoogleSpreadsheet(MASTER_SHEET_ID);
   await doc.useServiceAccountAuth(SERVICE_ACCOUNT_CREDENTIALS);
   await doc.loadInfo();
-  
+
   const sheet = doc.sheetsByIndex[0];
-  const rows = await sheet.getRows();
   
-  // Perbaikan handling row
-  const userRow = rows.find(row => {
-    try {
-      return row.get('User ID') === userId.toString();
-    } catch (e) {
-      console.warn('Error reading row:', e);
-      return false;
-    }
+  // Pastikan sheet ada dan memiliki header
+  if (!sheet || !sheet.headerValues || sheet.headerValues.length === 0) {
+    throw new Error('Sheet master tidak terinisialisasi');
+  }
+
+  // Gunakan metode yang lebih reliable untuk baca data
+  const rows = await sheet.getRows({
+    offset: 0,
+    limit: 1000,
+    orderBy: 'col1' // User ID
   });
-  
-  return userRow?.get('Spreadsheet URL');
+
+  // Cari dengan filter langsung
+  const userRow = rows.find(row => 
+    row._rawData[0]?.trim() === userId.toString()
+  );
+
+  return userRow?._rawData[2]; // Kolom ke-3 (Spreadsheet URL)
 }
 
 
