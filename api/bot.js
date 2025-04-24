@@ -5,22 +5,18 @@ import { createClient } from 'redis';
 // ========================
 // KONFIGURASI REDIS
 // ========================
-const redisClient = createClient({
-  url: process.env.REDIS_URL,
-  password: process.env.REDIS_PASSWORD,
-  socket: {
-    reconnectStrategy: (retries) => Math.min(retries * 50, 1000)
-  }
-});
-
-redisClient.on('error', (err) => console.error('Redis Error:', err));
-
-// Connect to Redis only when needed
-const connectRedis = async () => {
-  if (!redisClient.isOpen) {
-    await redisClient.connect();
-  }
-  return redisClient;
+const createRedisClient = () => {
+  return createClient({
+    url: process.env.REDIS_URL,
+    password: process.env.REDIS_PASSWORD,
+    socket: {
+      tls: true,
+      reconnectStrategy: (retries) => {
+        if (retries > 5) return new Error("Max retries reached");
+        return Math.min(retries * 200, 1000);
+      }
+    }
+  });
 };
 
 // ========================
@@ -28,20 +24,34 @@ const connectRedis = async () => {
 // ========================
 const redisStore = {
   async get(key) {
-    const client = await connectRedis();
-    const data = await client.get(key);
-    if (data) {
-      return JSON.parse(data);
+    const client = createRedisClient();
+    try {
+      await client.connect();
+      const data = await client.get(key);
+      return data ? JSON.parse(data) : {};
+    } finally {
+      await client.quit();
     }
-    return {};
   },
+
   async set(key, value) {
-    const client = await connectRedis();
-    await client.set(key, JSON.stringify(value));
+    const client = createRedisClient();
+    try {
+      await client.connect();
+      await client.set(key, JSON.stringify(value), { EX: 2592000 }); // 30 days TTL
+    } finally {
+      await client.quit();
+    }
   },
+
   async delete(key) {
-    const client = await connectRedis();
-    await client.del(key);
+    const client = createRedisClient();
+    try {
+      await client.connect();
+      await client.del(key);
+    } finally {
+      await client.quit();
+    }
   }
 };
 // ========================
@@ -189,17 +199,16 @@ bot.action('change_spreadsheet', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     
-    // Update session di Redis
-    ctx.session.isChangingSpreadsheet = true;
+    // Update session dengan cara yang aman
+    await ctx.session.save();
     
     await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
     return ctx.scene.enter('setup-spreadsheet');
   } catch (error) {
     console.error('Change spreadsheet error:', error);
-    ctx.reply('❌ Gagal memulai proses perubahan. Silakan coba /start');
+    await ctx.reply('❌ Gagal memulai proses. Silakan coba /start');
   }
 });
-
 // ========================
 // CORE FUNCTIONS
 // ========================
@@ -302,19 +311,35 @@ bot.command('start', async (ctx) => {
 // ========================
 
 export default async (req, res) => {
-  if (req.method === 'POST') {
-    try {
+  try {
+    if (req.method === 'POST') {
       const update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      await bot.handleUpdate(update);
-      res.status(200).send('OK');
-    } catch (error) {
-      console.error('Webhook error:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
+      
+      // Handle update dengan timeout
+      await Promise.race([
+        bot.handleUpdate(update),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ]);
+      
+      return res.status(200).send('OK');
     }
-  } else {
-    res.status(200).json({ 
+    
+    // Health check dengan koneksi Redis
+    const client = createRedisClient();
+    await client.connect();
+    const ping = await client.ping();
+    await client.quit();
+    
+    return res.status(200).json({ 
       status: 'Bot Aktif',
-      redisStatus: await redisClient.ping()
+      redisStatus: ping === 'PONG' ? 'OK' : 'ERROR'
+    });
+    
+  } catch (error) {
+    console.error('Global handler error:', error);
+    return res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
     });
   }
 };
