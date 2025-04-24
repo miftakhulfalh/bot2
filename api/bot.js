@@ -7,31 +7,43 @@ import { createClient } from 'redis';
 // ========================
 const redisClient = createClient({
   url: process.env.REDIS_URL,
-  password: process.env.REDIS_PASSWORD
+  password: process.env.REDIS_PASSWORD,
+  socket: {
+    reconnectStrategy: (retries) => Math.min(retries * 50, 1000)
+  }
 });
 
 redisClient.on('error', (err) => console.error('Redis Error:', err));
-await redisClient.connect();
+
+// Connect to Redis only when needed
+const connectRedis = async () => {
+  if (!redisClient.isOpen) {
+    await redisClient.connect();
+  }
+  return redisClient;
+};
 
 // ========================
 // CUSTOM REDIS SESSION STORAGE
 // ========================
 const redisStore = {
   async get(key) {
-    const data = await redisClient.get(key);
+    const client = await connectRedis();
+    const data = await client.get(key);
     if (data) {
       return JSON.parse(data);
     }
     return {};
   },
   async set(key, value) {
-    await redisClient.set(key, JSON.stringify(value));
+    const client = await connectRedis();
+    await client.set(key, JSON.stringify(value));
   },
   async delete(key) {
-    await redisClient.del(key);
+    const client = await connectRedis();
+    await client.del(key);
   }
 };
-
 // ========================
 // INISIALISASI BOT & SESSION
 // ========================
