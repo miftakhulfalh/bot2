@@ -223,9 +223,7 @@ bot.action('change_spreadsheet', async (ctx) => {
   try {
     await ctx.answerCbQuery();
     
-    // Update session dengan cara yang aman
-    await ctx.session.save();
-    
+    // Tidak perlu menyimpan session secara eksplisit
     await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
     return ctx.scene.enter('setup-spreadsheet');
   } catch (error) {
