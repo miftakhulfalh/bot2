@@ -237,7 +237,12 @@ bot.action('change_spreadsheet', async (ctx) => {
 bot.action('verify_access', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    await ctx.scene.enter('auto_verify'); // Masuk kembali ke scene auto_verify untuk mencoba verifikasi ulang
+    
+    // Simpan session dengan cara yang aman
+    await ctx.session.save();
+    
+    // Masuk ke scene auto_verify
+    return ctx.scene.enter('auto_verify');
   } catch (error) {
     console.error('Verify access error:', error);
     await ctx.reply('❌ Gagal memulai proses verifikasi ulang. Silakan coba lagi.');
