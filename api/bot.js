@@ -228,7 +228,6 @@ bot.action('change_spreadsheet', async (ctx) => {
     return ctx.scene.enter('setup-spreadsheet');
   } catch (error) {
     console.error('Change spreadsheet error:', error);
-    await ctx.reply('❌ Gagal memulai proses. Silakan coba /start');
   }
 });
 
