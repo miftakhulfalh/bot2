@@ -191,6 +191,30 @@ function createAutoVerifyScene() {
   return scene;
 }
 
+function createManualVerifyScene() {
+  const scene = new Scenes.BaseScene('manual_verify');
+
+  scene.enter(async (ctx) => {
+    await ctx.reply('🔍 Silakan verifikasi akses Anda secara manual dengan mengikuti langkah-langkah berikut:');
+    await ctx.reply('1. Buka spreadsheet Anda.\n2. Pastikan bot memiliki akses.\n3. Kirimkan pesan ini jika sudah selesai.', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            Markup.button.callback('Verifikasi Ulang', 'verify_access') // Tombol untuk verifikasi ulang
+          ]
+        ]
+      }
+    });
+  });
+
+  scene.on('text', async (ctx) => {
+    await ctx.reply('✅ Terima kasih! Silakan coba lagi untuk verifikasi otomatis.');
+    return ctx.scene.leave();
+  });
+
+  return scene;
+}
+
 // ========================
 // ACTION HANDLERS
 // ========================
@@ -209,6 +233,17 @@ bot.action('change_spreadsheet', async (ctx) => {
     await ctx.reply('❌ Gagal memulai proses. Silakan coba /start');
   }
 });
+
+bot.action('verify_access', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    await ctx.scene.enter('auto_verify'); // Masuk kembali ke scene auto_verify untuk mencoba verifikasi ulang
+  } catch (error) {
+    console.error('Verify access error:', error);
+    await ctx.reply('❌ Gagal memulai proses verifikasi ulang. Silakan coba lagi.');
+  }
+});
+
 // ========================
 // CORE FUNCTIONS
 // ========================
@@ -290,9 +325,9 @@ function extractSheetIdFromUrl(url) {
 
 const stage = new Scenes.Stage([
   createSetupSpreadsheetScene(),
-  createAutoVerifyScene()
+  createAutoVerifyScene(),
+  createManualVerifyScene() // Pastikan scene ini terdaftar
 ]);
-
 bot.use(stage.middleware());
 
 bot.command('start', async (ctx) => {
