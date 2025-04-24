@@ -195,19 +195,14 @@ function createManualVerifyScene() {
 
   scene.enter(async (ctx) => {
     await ctx.reply('🔍 Silakan verifikasi akses Anda secara manual dengan mengikuti langkah-langkah berikut:');
-    await ctx.reply('1. Buka spreadsheet Anda.\n2. Pastikan bot memiliki akses.\n3. Kirimkan pesan ini jika sudah selesai.', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            Markup.button.callback('Verifikasi Ulang', 'verify_access') // Tombol untuk verifikasi ulang
-          ]
-        ]
-      }
+    await ctx.reply('`1. Spreadsheet dibagikan ke *${serviceEmail}*\n` +
+        `2. Permission set ke *Editor*\n` +
+        `3. Kirimkan pesan "Sudah" setelah membagikan spreadsheet Anda`, {
     });
   });
 
   scene.on('text', async (ctx) => {
-    await ctx.reply('✅ Terima kasih! Silakan coba lagi untuk verifikasi otomatis.');
+    await ctx.reply('✅ Terima kasih! Silakan coba lagi untuk verifikasi otomatis atau kirimkan pesan /start');
     return ctx.scene.leave();
   });
 
