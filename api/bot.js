@@ -174,8 +174,7 @@ function createAutoVerifyScene() {
         `*Judul:* ${doc.title}\n` +
         `*Update Terakhir:* ${new Date(doc.updateTime).toLocaleString('id-ID')}`,
         Markup.inlineKeyboard([
-          [Markup.button.url('Buka Spreadsheet', userSheetData.spreadsheetUrl)],
-          [Markup.button.callback('Ganti Spreadsheet', 'change_spreadsheet')]
+          [Markup.button.url('Buka Spreadsheet', userSheetData.spreadsheetUrl)]
         ])
       );
       
