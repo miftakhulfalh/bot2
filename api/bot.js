@@ -1,6 +1,5 @@
 import { Telegraf, Scenes, session, Markup } from 'telegraf';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { Redis } from '@telegraf/session/redis';
 import { createClient } from 'redis';
 
 // ========================
@@ -15,13 +14,32 @@ redisClient.on('error', (err) => console.error('Redis Error:', err));
 await redisClient.connect();
 
 // ========================
+// CUSTOM REDIS SESSION STORAGE
+// ========================
+const redisStore = {
+  async get(key) {
+    const data = await redisClient.get(key);
+    if (data) {
+      return JSON.parse(data);
+    }
+    return {};
+  },
+  async set(key, value) {
+    await redisClient.set(key, JSON.stringify(value));
+  },
+  async delete(key) {
+    await redisClient.del(key);
+  }
+};
+
+// ========================
 // INISIALISASI BOT & SESSION
 // ========================
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const store = Redis({ client: redisClient });
 
+// Custom session middleware
 bot.use(session({
-  store,
+  store: redisStore,
   getSessionKey: (ctx) => ctx.from?.id.toString(),
   defaultSession: {
     isChangingSpreadsheet: false
@@ -161,7 +179,6 @@ bot.action('change_spreadsheet', async (ctx) => {
     
     // Update session di Redis
     ctx.session.isChangingSpreadsheet = true;
-    await ctx.session.save();
     
     await ctx.editMessageText('🔄 Silakan kirim link spreadsheet BARU Anda:');
     return ctx.scene.enter('setup-spreadsheet');
@@ -174,6 +191,32 @@ bot.action('change_spreadsheet', async (ctx) => {
 // ========================
 // CORE FUNCTIONS
 // ========================
+
+async function getUserSheetData(userId) {
+  try {
+    const doc = new GoogleSpreadsheet(process.env.MASTER_SHEET_ID);
+    await doc.useServiceAccountAuth(JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS));
+    await doc.loadInfo();
+
+    const sheet = doc.sheetsByIndex[0];
+    if (!sheet) return null;
+
+    const rows = await sheet.getRows();
+    const userRow = rows.find(row => row['User ID'] === userId.toString());
+    
+    if (!userRow) return null;
+    
+    return {
+      userId: userRow['User ID'],
+      username: userRow['Username'],
+      spreadsheetUrl: userRow['Spreadsheet URL'],
+      registeredAt: userRow['Registered At']
+    };
+  } catch (error) {
+    console.error('Error getting user sheet data:', error);
+    return null;
+  }
+}
 
 async function saveUserData(userData) {
   const doc = new GoogleSpreadsheet(process.env.MASTER_SHEET_ID);
