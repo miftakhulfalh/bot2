@@ -194,11 +194,19 @@ function createManualVerifyScene() {
   const scene = new Scenes.BaseScene('manual_verify');
 
   scene.enter(async (ctx) => {
-    await ctx.reply('🔍 Silakan verifikasi akses Anda secara manual dengan mengikuti langkah-langkah berikut:');
-    await ctx.reply('`1. Spreadsheet dibagikan ke *${serviceEmail}*\n` +
-        `2. Permission set ke *Editor*\n` +
-        `3. Kirimkan pesan "Sudah" setelah membagikan spreadsheet Anda`, {
-    });
+    try {
+      const serviceEmail = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS).client_email;
+      
+      await ctx.replyWithMarkdown(
+        '🔍 Silakan verifikasi akses Anda secara manual dengan mengikuti langkah-langkah berikut:\n' +
+        `1. Spreadsheet dibagikan ke *${serviceEmail}*\n` +
+        '2. Permission set ke *Editor*\n' +
+        '3. Kirimkan pesan "Sudah" setelah membagikan spreadsheet Anda'
+      );
+    } catch (error) {
+      console.error('Manual verify error:', error);
+      await ctx.reply('❌ Terjadi kesalahan. Silakan coba /start');
+    }
   });
 
   scene.on('text', async (ctx) => {
